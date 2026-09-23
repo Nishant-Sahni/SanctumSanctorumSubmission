@@ -23,7 +23,10 @@ BULK_DISCOUNT_PERCENT = 5
 
 def calculate_discount_percent(member: Member, total_quantity: int) -> int:
     """Tier discount, plus the bulk discount when total quantity >= threshold."""
-    raise NotImplementedError("calculate_discount_percent")
+    pct = TIER_DISCOUNT_PERCENT[member.tier]
+    if total_quantity >= BULK_QUANTITY_THRESHOLD:
+        pct += BULK_DISCOUNT_PERCENT
+    return pct
 
 
 def create_order(db: Session, data: OrderCreate, now: datetime) -> Order:
@@ -36,14 +39,55 @@ def create_order(db: Session, data: OrderCreate, now: datetime) -> Order:
     Then stock is decremented for every item and prices are snapshotted.
     Pricing: discount_cents = subtotal * percent // 100; total = subtotal - discount.
     """
-    # TODO:
-    # 1. Load the member (404) and every book (404).
-    # 2. If any book is restricted, check the member's tier (403).
-    # 3. Check stock for every item before changing anything (409).
-    # 4. Decrement stock and build OrderItems with the current price as unit_price_cents.
-    # 5. Compute subtotal, discount_percent (calculate_discount_percent), discount_cents, total.
-    # 6. Save the pending Order with created_at = now and return it.
-    raise NotImplementedError("create_order")
+    from app.models import OrderItem
+    from app.services.members import get_member, ensure_can_access_restricted
+    from app.services.books import get_book
+
+    member = get_member(db, data.member_id)
+    books = {}
+    for item in data.items:
+        books[item.book_id] = get_book(db, item.book_id)
+
+    for item in data.items:
+        if books[item.book_id].restricted:
+            ensure_can_access_restricted(member)
+            break
+
+    for item in data.items:
+        book = books[item.book_id]
+        if book.stock < item.quantity:
+            raise HTTPException(status_code=409, detail=f"Insufficient stock for '{book.title}'")
+
+    order_items = []
+    for item in data.items:
+        book = books[item.book_id]
+        book.stock -= item.quantity
+        order_items.append(OrderItem(
+            book_id=item.book_id,
+            quantity=item.quantity,
+            unit_price_cents=book.price_cents,
+        ))
+
+    total_qty = sum(item.quantity for item in data.items)
+    subtotal = sum(oi.unit_price_cents * oi.quantity for oi in order_items)
+    discount_percent = calculate_discount_percent(member, total_qty)
+    discount_cents = subtotal * discount_percent // 100
+    total_cents = subtotal - discount_cents
+
+    order = Order(
+        member_id=data.member_id,
+        status=OrderStatus.PENDING.value,
+        subtotal_cents=subtotal,
+        discount_percent=discount_percent,
+        discount_cents=discount_cents,
+        total_cents=total_cents,
+        created_at=now,
+        items=order_items,
+    )
+    db.add(order)
+    db.commit()
+    db.refresh(order)
+    return order
 
 
 def get_order(db: Session, order_id: int) -> Order:
@@ -71,6 +115,8 @@ def cancel_order(db: Session, order_id: int) -> Order:
     if order.status != OrderStatus.PENDING.value:
         raise HTTPException(status_code=409, detail=f"Cannot cancel an order that is {order.status}")
     order.status = OrderStatus.CANCELLED.value
+    for item in order.items:
+        item.book.stock += item.quantity
     db.commit()
     db.refresh(order)
     return order
