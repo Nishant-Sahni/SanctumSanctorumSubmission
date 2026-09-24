@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models import Loan, MemberTier
@@ -67,8 +67,8 @@ def create_loan(db: Session, data: LoanCreate, now: datetime) -> LoanOut:
     On success: borrowed_at = now, due_at = now + 14 days, returned_at None,
     late_fee_cents 0, and stock is decremented by one.
     """
-    from app.services.members import get_member, ensure_can_access_restricted
-    from app.services.books import get_book
+    from app.services.books import get_book, reserve_stock
+    from app.services.members import ensure_can_access_restricted, get_member
 
     member = get_member(db, data.member_id)
     book = get_book(db, data.book_id)
@@ -91,7 +91,8 @@ def create_loan(db: Session, data: LoanCreate, now: datetime) -> LoanOut:
     if limit is not None and len(member_loans) >= limit:
         raise HTTPException(status_code=409, detail="Member has reached their loan limit")
 
-    if book.stock == 0:
+    if not reserve_stock(db, book.id, 1):
+        db.rollback()
         raise HTTPException(status_code=409, detail="Book is out of stock")
 
     loan = Loan(
@@ -102,7 +103,6 @@ def create_loan(db: Session, data: LoanCreate, now: datetime) -> LoanOut:
         returned_at=None,
         late_fee_cents=0,
     )
-    book.stock -= 1
     db.add(loan)
     db.commit()
     db.refresh(loan)
@@ -123,15 +123,24 @@ def return_loan(db: Session, loan_id: int, now: datetime) -> LoanOut:
     Rules: 404 if missing; 409 if already returned. Sets returned_at = now, restores one copy
     of stock and charges a late fee (see ``calculate_late_fee``).
     """
+    from app.services.books import release_stock
+
     loan = db.get(Loan, loan_id)
     if loan is None:
         raise HTTPException(status_code=404, detail="Loan not found")
-    if loan.returned_at is not None:
+
+    late_fee = calculate_late_fee(loan.due_at, now, loan.book.price_cents)
+
+    result = db.execute(
+        update(Loan)
+        .where(Loan.id == loan.id, Loan.returned_at.is_(None))
+        .values(returned_at=now, late_fee_cents=late_fee)
+    )
+    if result.rowcount == 0:
+        db.refresh(loan)
         raise HTTPException(status_code=409, detail="Loan already returned")
 
-    loan.returned_at = now
-    loan.late_fee_cents = calculate_late_fee(loan.due_at, now, loan.book.price_cents)
-    loan.book.stock += 1
+    release_stock(db, loan.book_id, 1)
     db.commit()
     db.refresh(loan)
     return to_loan_out(loan, now)
