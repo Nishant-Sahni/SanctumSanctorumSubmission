@@ -3,6 +3,7 @@ from typing import Optional
 
 from fastapi import HTTPException
 from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import Book
@@ -48,7 +49,11 @@ def create_book(db: Session, data: BookCreate) -> Book:
         raise HTTPException(status_code=409, detail="A book with this ISBN already exists")
     book = Book(**data.model_dump())
     db.add(book)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="A book with this ISBN already exists")
     db.refresh(book)
     return book
 
