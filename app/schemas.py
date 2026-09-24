@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Annotated, List, Literal, Optional
+from typing import Annotated, Generic, List, Literal, Optional, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
@@ -33,6 +33,18 @@ def normalize_isbn13(raw: str) -> str:
     if int(isbn[12]) != expected:
         raise ValueError("isbn checksum is invalid")
     return isbn
+
+
+# --- Pagination -------------------------------------------------------------------------
+
+T = TypeVar("T")
+
+
+class Page(BaseModel, Generic[T]):
+    items: List[T]
+    total: int
+    limit: int
+    offset: int
 
 
 # --- Health -----------------------------------------------------------------------------
@@ -88,11 +100,7 @@ class BookOut(BaseModel):
     restricted: bool
 
 
-class BookPage(BaseModel):
-    items: List[BookOut]
-    total: int
-    limit: int
-    offset: int
+BookPage = Page[BookOut]
 
 
 BookSort = Literal["title", "-title", "price", "-price"]
@@ -124,6 +132,9 @@ class MemberOut(BaseModel):
     email: str
     tier: str
     created_at: datetime
+
+
+MemberPage = Page[MemberOut]
 
 
 class MemberStats(BaseModel):
