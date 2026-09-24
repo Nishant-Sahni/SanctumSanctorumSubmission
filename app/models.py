@@ -5,7 +5,7 @@ import enum
 from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -33,8 +33,8 @@ class Book(Base):
     title: Mapped[str] = mapped_column(String(200))
     author: Mapped[str] = mapped_column(String(200))
     isbn: Mapped[str] = mapped_column(String(13), unique=True, index=True)
-    price_cents: Mapped[int] = mapped_column(Integer)
-    stock: Mapped[int] = mapped_column(Integer)
+    price_cents: Mapped[int] = mapped_column(BigInteger)
+    stock: Mapped[int] = mapped_column(BigInteger)
     restricted: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
@@ -57,10 +57,10 @@ class Order(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     member_id: Mapped[int] = mapped_column(ForeignKey("members.id"), index=True)
     status: Mapped[str] = mapped_column(String(20), default=OrderStatus.PENDING.value)
-    subtotal_cents: Mapped[int] = mapped_column(Integer)
-    discount_percent: Mapped[int] = mapped_column(Integer)
-    discount_cents: Mapped[int] = mapped_column(Integer)
-    total_cents: Mapped[int] = mapped_column(Integer)
+    subtotal_cents: Mapped[int] = mapped_column(BigInteger)
+    discount_percent: Mapped[int] = mapped_column(BigInteger)
+    discount_cents: Mapped[int] = mapped_column(BigInteger)
+    total_cents: Mapped[int] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(DateTime)
 
     member: Mapped[Member] = relationship(back_populates="orders")
@@ -76,9 +76,9 @@ class OrderItem(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), index=True)
     book_id: Mapped[int] = mapped_column(ForeignKey("books.id"), index=True)
-    quantity: Mapped[int] = mapped_column(Integer)
+    quantity: Mapped[int] = mapped_column(BigInteger)
     # Price snapshot taken when the order was placed.
-    unit_price_cents: Mapped[int] = mapped_column(Integer)
+    unit_price_cents: Mapped[int] = mapped_column(BigInteger)
 
     order: Mapped[Order] = relationship(back_populates="items")
     book: Mapped[Book] = relationship()
@@ -97,7 +97,7 @@ class Loan(Base):
     borrowed_at: Mapped[datetime] = mapped_column(DateTime)
     due_at: Mapped[datetime] = mapped_column(DateTime)
     returned_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    late_fee_cents: Mapped[int] = mapped_column(Integer, default=0)
+    late_fee_cents: Mapped[int] = mapped_column(BigInteger, default=0)
 
     member: Mapped[Member] = relationship(back_populates="loans")
     book: Mapped[Book] = relationship()
