@@ -2,11 +2,40 @@
 from typing import Optional
 
 from fastapi import HTTPException
-from sqlalchemy import select, func
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.models import Book
 from app.schemas import BookCreate, BookPage, BookSort, BookUpdate
+
+
+def reserve_stock(db: Session, book_id: int, quantity: int) -> bool:
+    """Atomically take `quantity` copies of a book. False if not enough are left.
+
+    The check and the decrement are a single UPDATE, so two concurrent orders for
+    the last copy cannot both succeed: the database locks the row, and the second
+    UPDATE re-evaluates `stock >= quantity` against the committed value.
+    """
+    result = db.execute(
+        update(Book)
+        .where(Book.id == book_id, Book.stock >= quantity)
+        .values(stock=Book.stock - quantity)
+    )
+    return result.rowcount == 1
+
+
+def release_stock(db: Session, book_id: int, quantity: int) -> None:
+    """Atomically return copies to stock.
+
+    The increment happens in SQL rather than in Python, so two concurrent
+    releases for the same book cannot overwrite each other.
+    """
+    db.execute(
+        update(Book)
+        .where(Book.id == book_id)
+        .values(stock=Book.stock + quantity)
+    )
+
 
 
 def create_book(db: Session, data: BookCreate) -> Book:

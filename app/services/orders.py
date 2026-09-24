@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Book, Member, MemberTier, Order, OrderItem, OrderStatus
 from app.schemas import OrderCreate, OrderItemIn
-from app.services.books import get_book
+from app.services.books import get_book, release_stock, reserve_stock
 from app.services.members import ensure_can_access_restricted, get_member
 
 # Percentage discount granted by each membership tier.
@@ -32,38 +32,12 @@ def calculate_discount_percent(member: Member, total_quantity: int) -> int:
     return pct
 
 
-def _reserve_stock(db: Session, book_id: int, quantity: int) -> bool:
-    """Atomically take `quantity` copies of a book. False if not enough are left.
-
-    The check and the decrement are a single UPDATE, so two concurrent orders for
-    the last copy cannot both succeed: the database locks the row, and the second
-    UPDATE re-evaluates `stock >= quantity` against the committed value.
-    """
-    result = db.execute(
-        update(Book)
-        .where(Book.id == book_id, Book.stock >= quantity)
-        .values(stock=Book.stock - quantity)
-    )
-    return result.rowcount == 1
-
-
-def _release_stock(db: Session, book_id: int, quantity: int) -> None:
-    """Atomically return copies to stock.
-
-    The increment happens in SQL rather than in Python, so two concurrent
-    releases for the same book cannot overwrite each other.
-    """
-    db.execute(
-        update(Book)
-        .where(Book.id == book_id)
-        .values(stock=Book.stock + quantity)
-    )
 
 
 def _reserve_stock_for_items(db: Session, items: List[OrderItemIn], books: Dict[int, Book]) -> None:
     """Reserve stock for every item, or for none of them (409 on the first shortfall)."""
     for item in items:
-        if not _reserve_stock(db, item.book_id, item.quantity):
+        if not reserve_stock(db, item.book_id, item.quantity):
             # Build the message first: rollback expires every loaded object.
             detail = f"Insufficient stock for '{books[item.book_id].title}'"
             # Undo the reservations already made for earlier items in this order.
@@ -167,7 +141,7 @@ def cancel_order(db: Session, order_id: int) -> Order:
     order = get_order(db, order_id)
     _transition_from_pending(db, order, OrderStatus.CANCELLED, "cancel")
     for item in order.items:
-        _release_stock(db, item.book_id, item.quantity)
+        release_stock(db, item.book_id, item.quantity)
     db.commit()
     db.refresh(order)
     return order
